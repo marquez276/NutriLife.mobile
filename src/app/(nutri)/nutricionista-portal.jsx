@@ -1,215 +1,277 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Text, View } from "react-native";
 import { useRouter } from "expo-router";
-import { Screen, Card, Button, Input, Sheet, Badge, Avatar, Select, Icon, Empty, Row } from "../../components/ui";
+import { Screen, Card, CardTitle, Button, Input, Sheet, Badge, Avatar, Empty, Row, Segmented } from "../../components/ui";
 import { LineChart } from "../../components/Charts";
 import { useApp } from "../../context/AppContext";
 import { apiFetch, JSON_HEADERS } from "../../api";
 import { toast } from "../../toast";
 import { c } from "../../theme";
 
-const FORM_VAZIO = { name: "", age: "", sex: "", weight: "", height: "", goal: "", healthIssues: "", restrictions: "", activity: "", sleep: "" };
-const op = (...v) => v.map(x => ({ value: x, label: x }));
-
 export default function Nutricionista() {
   const router = useRouter();
-  const { pacientes, adicionarPaciente, usuarioLogado } = useApp();
+  const { vinculos, aceitarVinculo, recusarVinculo, gerarConvite, pacientesExternos, cadastrarPacienteExterno, usuarioLogado } = useApp();
   const [busca, setBusca] = useState("");
   const [selecionado, setSelecionado] = useState(null);
-  const [notas, setNotas] = useState("");
-  const [notasId, setNotasId] = useState(null);
+  const [observacoes, setObservacoes] = useState([]);
+  const [novaObservacao, setNovaObservacao] = useState("");
   const [salvandoNotas, setSalvandoNotas] = useState(false);
   const [evolucaoPac, setEvolucaoPac] = useState(null);
-  const [notaProgresso, setNotaProgresso] = useState("");
-  const [salvandoProg, setSalvandoProg] = useState(false);
+  const [evolucaoDados, setEvolucaoDados] = useState(null);
   const [novoAberto, setNovoAberto] = useState(false);
-  const [novo, setNovo] = useState(FORM_VAZIO);
-  const setCampo = (campo) => (v) => setNovo(p => ({ ...p, [campo]: v }));
+  const [aba, setAba] = useState("convite");
+  const [convite, setConvite] = useState(null);
+  const [gerandoConvite, setGerandoConvite] = useState(false);
+  const [externo, setExterno] = useState({ nome: "", objetivo: "", observacoes: "" });
 
-  const buscarProntuario = async (paciente) => {
-    if (!usuarioLogado?.id || !paciente?.name) return null;
+  const pacientesAtivos = vinculos.filter(v => v.status === "ATIVO");
+  const solicitacoesPendentes = vinculos.filter(v => v.status === "PENDENTE" && v.origem === "PACIENTE");
+  const convitesAbertos = vinculos.filter(v => v.status === "PENDENTE" && v.origem === "NUTRICIONISTA");
+
+  const [planosPorCliente, setPlanosPorCliente] = useState({});
+
+  useEffect(() => {
+    pacientesAtivos.forEach(v => {
+      if (!v.clienteId || planosPorCliente[v.clienteId] !== undefined) return;
+      apiFetch(`/plano/personalizado/${v.clienteId}`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(plano => setPlanosPorCliente(prev => ({ ...prev, [v.clienteId]: plano })))
+        .catch(() => setPlanosPorCliente(prev => ({ ...prev, [v.clienteId]: null })));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vinculos]);
+
+  const abrirDetalhes = async (vinculo) => {
+    setSelecionado(vinculo);
+    setObservacoes([]);
+    setNovaObservacao("");
+    if (!vinculo?.clienteId) return;
     try {
-      const res = await apiFetch(`/prontuario/${usuarioLogado.id}/${encodeURIComponent(paciente.name)}`);
-      return res.ok ? await res.json() : null;
-    } catch { return null; }
-  };
-
-  const abrirDetalhes = async (paciente) => {
-    setSelecionado(paciente);
-    setNotas("");
-    setNotasId(null);
-    const data = await buscarProntuario(paciente);
-    if (data) { setNotas(data.observations || ""); setNotasId(data.id > 0 ? data.id : null); }
-  };
-
-  const postarProntuario = async (corpo) => {
-    const res = await apiFetch("/prontuario", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ ...corpo, nutricionistaId: usuarioLogado.id }) });
-    return res.ok ? res.json() : null;
+      const res = await apiFetch(`/prontuario/${vinculo.clienteId}`);
+      if (res.ok) setObservacoes(await res.json());
+    } catch {}
   };
 
   const salvarNotas = async () => {
-    if (!selecionado?.name) return;
+    if (!selecionado?.clienteId || !novaObservacao.trim()) return;
     setSalvandoNotas(true);
     try {
-      const data = await postarProntuario({ consultaId: notasId, observations: notas, pacienteNome: selecionado.name });
-      if (data) { setNotasId(data.id); toast.success("Notas clínicas salvas!"); } else toast.error("Erro ao salvar notas.");
+      const res = await apiFetch("/prontuario", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ clienteId: selecionado.clienteId, texto: novaObservacao.trim() }) });
+      if (res.ok) {
+        const salva = await res.json();
+        setObservacoes(prev => [salva, ...prev]);
+        setNovaObservacao("");
+        toast.success("Observação salva com sucesso.");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.message || "Não foi possível salvar a observação.");
+      }
     } catch { toast.error("Erro ao conectar com o servidor."); }
     setSalvandoNotas(false);
   };
 
-  const abrirEvolucao = async (paciente) => {
-    setEvolucaoPac(paciente);
-    setNotaProgresso("");
-    const data = await buscarProntuario(paciente);
-    if (data) setNotaProgresso(data.observations || "");
+  const abrirEvolucao = async (vinculo) => {
+    setEvolucaoPac(vinculo);
+    setEvolucaoDados(null);
+    if (vinculo?.clienteId) {
+      try {
+        const res = await apiFetch(`/clientes/${vinculo.clienteId}/progresso`);
+        if (res.ok) setEvolucaoDados(await res.json());
+      } catch {}
+    }
   };
 
-  const salvarProgresso = async () => {
-    if (!evolucaoPac?.name) return;
-    setSalvandoProg(true);
-    try {
-      const data = await postarProntuario({ observations: notaProgresso, pacienteNome: evolucaoPac.name });
-      data ? toast.success("Nota de progresso salva!") : toast.error("Erro ao salvar nota.");
-    } catch { toast.error("Erro ao conectar com o servidor."); }
-    setSalvandoProg(false);
+  const handleGerarConvite = async () => {
+    setGerandoConvite(true);
+    const codigo = await gerarConvite();
+    if (codigo) setConvite(codigo);
+    setGerandoConvite(false);
   };
 
-  const salvarNovo = () => {
-    if (!novo.name || !novo.age || !novo.weight) { toast.error("Preencha os campos obrigatórios (Nome, Idade, Peso)"); return; }
-    adicionarPaciente(novo);
-    toast.success(`Paciente ${novo.name} adicionado!`);
-    setNovoAberto(false);
-    setNovo(FORM_VAZIO);
+  const salvarExterno = async () => {
+    if (!externo.nome) { toast.error("Informe o nome do paciente."); return; }
+    const { ok } = await cadastrarPacienteExterno(externo);
+    if (ok) {
+      toast.success(`Paciente ${externo.nome} cadastrado.`);
+      setExterno({ nome: "", objetivo: "", observacoes: "" });
+      setNovoAberto(false);
+    }
   };
 
-  const filtrados = pacientes.filter(p => p.name.toLowerCase().includes(busca.toLowerCase()));
-  const evo = evolucaoPac?.evolution || [];
+  const filtrados = pacientesAtivos.filter(v => (v.clienteNome || "").toLowerCase().includes(busca.toLowerCase()));
+  const historico = evolucaoDados?.historico || [];
 
   return (
     <Screen title="Portal do Nutricionista" subtitle={`Olá, ${usuarioLogado?.nome || "Nutricionista"}! Gerencie seus pacientes.`}>
       <Row>
         <Button title="Agenda de Hoje" icon="calendar" variant="outlineGreen" style={{ flex: 1 }} onPress={() => router.push("/agenda-nutricionista")} />
-        <Button title="Novo Paciente" icon="plus" style={{ flex: 1 }} onPress={() => setNovoAberto(true)} />
+        <Button title="Adicionar Paciente" icon="plus" style={{ flex: 1 }} onPress={() => { setConvite(null); setAba("convite"); setNovoAberto(true); }} />
       </Row>
 
       <View style={{ flexDirection: "row", gap: 12 }}>
         <Card style={{ flex: 1, backgroundColor: c.green600 }}>
-          <Text style={{ fontSize: 11, fontWeight: "700", color: "#fff", opacity: 0.8, textTransform: "uppercase" }}>Pacientes</Text>
-          <Text style={{ fontSize: 28, fontWeight: "800", color: "#fff" }}>{pacientes.length}</Text>
+          <Text style={{ fontSize: 11, fontWeight: "700", color: "#fff", opacity: 0.8, textTransform: "uppercase" }}>Vinculados</Text>
+          <Text style={{ fontSize: 28, fontWeight: "800", color: "#fff" }}>{pacientesAtivos.length}</Text>
         </Card>
         <Card style={{ flex: 1 }}>
           <Text style={{ fontSize: 11, fontWeight: "700", color: c.gray500, textTransform: "uppercase" }}>CRN</Text>
           <Text style={{ fontSize: 18, fontWeight: "800", color: c.gray900 }}>{usuarioLogado?.crn || "—"}</Text>
         </Card>
       </View>
-      <Card>
-        <Text style={{ fontSize: 11, fontWeight: "700", color: c.gray500, textTransform: "uppercase" }}>Especialidade</Text>
-        <Text style={{ fontWeight: "700", color: c.gray900 }}>{usuarioLogado?.specialty || usuarioLogado?.especialidade || "—"}</Text>
-      </Card>
+
+      {solicitacoesPendentes.length > 0 && (
+        <Card>
+          <CardTitle icon="user-plus">Solicitações de acompanhamento</CardTitle>
+          {solicitacoesPendentes.map(v => (
+            <Row key={v.id} style={{ justifyContent: "space-between", marginBottom: 8 }}>
+              <Text style={{ fontWeight: "700", color: c.gray900, flex: 1 }}>{v.clienteNome}</Text>
+              <Button title="Recusar" variant="outline" small onPress={() => recusarVinculo(v.id)} />
+              <Button title="Aceitar" small onPress={() => aceitarVinculo(v.id)} />
+            </Row>
+          ))}
+        </Card>
+      )}
+
+      {convitesAbertos.length > 0 && (
+        <Card>
+          <CardTitle icon="link">Convites aguardando uso</CardTitle>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {convitesAbertos.map(v => <Badge key={v.id} text={v.codigoConvite} tone="gray" />)}
+          </View>
+        </Card>
+      )}
 
       <Input placeholder="Buscar paciente por nome..." value={busca} onChangeText={setBusca} />
 
       {filtrados.length === 0 ? (
-        <Card><Empty text={pacientes.length === 0 ? 'Nenhum paciente cadastrado ainda. Toque em "Novo Paciente" para adicionar.' : "Nenhum paciente encontrado com esse nome."} /></Card>
+        <Card><Empty text={pacientesAtivos.length === 0 ? "Nenhum paciente vinculado, melhore seu perfil e espere seus clientes" : "Nenhum paciente encontrado com esse nome."} /></Card>
       ) : (
-        filtrados.map(p => (
-          <Card key={p.id} style={{ gap: 12 }}>
-            <Row style={{ gap: 12 }}>
-              <Avatar nome={p.name} size={56} />
-              <View style={{ flex: 1 }}>
-                <Row style={{ justifyContent: "space-between" }}>
-                  <Text style={{ fontSize: 18, fontWeight: "700", color: c.gray900, flex: 1 }} numberOfLines={1}>{p.name}</Text>
-                  <Badge text={p.status} tone={p.status === "Em dia" ? "green" : "amber"} />
-                </Row>
-                <Text style={{ color: c.gray500, fontSize: 13 }}>{p.age} anos • {p.goal || "Sem objetivo definido"}</Text>
+        filtrados.map(v => {
+          const plano = planosPorCliente[v.clienteId];
+          const temPlano = !!plano;
+          return (
+            <Card key={v.id} style={{ gap: 12 }}>
+              <Row style={{ gap: 12 }}>
+                <Avatar nome={v.clienteNome} size={56} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 18, fontWeight: "700", color: c.gray900 }} numberOfLines={1}>{v.clienteNome}</Text>
+                  <Text style={{ color: c.gray500, fontSize: 13 }} numberOfLines={1}>{v.clienteEmail}</Text>
+                </View>
+              </Row>
+              <View style={{ backgroundColor: c.gray50, borderRadius: 10, padding: 10 }}>
+                {temPlano ? (
+                  <>
+                    <Text style={{ color: c.green700, fontWeight: "700", fontSize: 13 }}>✓ Plano criado</Text>
+                    {plano.dataInicio && (
+                      <Text style={{ color: c.gray400, fontSize: 12 }}>Última atualização: {new Date(plano.dataInicio).toLocaleDateString("pt-BR")}</Text>
+                    )}
+                  </>
+                ) : (
+                  <Text style={{ color: c.gray400, fontWeight: "700", fontSize: 13 }}>○ Nenhum plano criado</Text>
+                )}
               </View>
-            </Row>
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <View style={{ flex: 1, backgroundColor: c.gray50, borderRadius: 12, padding: 10 }}>
-                <Text style={{ fontSize: 10, fontWeight: "700", color: c.gray400, textTransform: "uppercase" }}>Peso Atual</Text>
-                <Text style={{ fontSize: 17, fontWeight: "800" }}>{p.weight} kg</Text>
+              <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap" }}>
+                <Button title="Prontuário" icon="clipboard" variant="outline" style={{ flex: 1 }} onPress={() => abrirDetalhes(v)} />
+                <Button title="Evolução" icon="trending-up" variant="outline" style={{ flex: 1 }} onPress={() => abrirEvolucao(v)} />
               </View>
-              <View style={{ flex: 1, backgroundColor: c.gray50, borderRadius: 12, padding: 10 }}>
-                <Text style={{ fontSize: 10, fontWeight: "700", color: c.gray400, textTransform: "uppercase" }}>Altura</Text>
-                <Text style={{ fontSize: 17, fontWeight: "800" }}>{p.height ? `${p.height} cm` : "—"}</Text>
-              </View>
+              <Button
+                title={temPlano ? "Criar Novo Plano Personalizado" : "Criar Plano Personalizado"}
+                onPress={() => router.push({ pathname: "/plano-personalizado", params: { clienteId: v.clienteId, clienteNome: v.clienteNome } })}
+              />
+            </Card>
+          );
+        })
+      )}
+
+      {pacientesExternos.length > 0 && (
+        <Card>
+          <CardTitle icon="user">Pacientes sem conta</CardTitle>
+          {pacientesExternos.map(p => (
+            <View key={p.id} style={{ paddingVertical: 8 }}>
+              <Text style={{ fontWeight: "700", color: c.gray900 }}>{p.nome}</Text>
+              <Text style={{ color: c.gray500, fontSize: 13 }}>{p.objetivo || "Sem objetivo definido"}</Text>
             </View>
-            <Row>
-              <Button title="Detalhes" icon="clipboard" variant="outline" style={{ flex: 1 }} onPress={() => abrirDetalhes(p)} />
-              <Button title="Evolução" icon="trending-up" style={{ flex: 1 }} onPress={() => abrirEvolucao(p)} />
-            </Row>
-          </Card>
-        ))
+          ))}
+        </Card>
       )}
 
       {/* Detalhes / prontuário */}
-      <Sheet visible={!!selecionado} onClose={() => setSelecionado(null)} title={`Prontuário: ${selecionado?.name || ""}`} full>
+      <Sheet visible={!!selecionado} onClose={() => setSelecionado(null)} title={`Prontuário: ${selecionado?.clienteNome || ""}`} full>
         {selecionado && (
-          <>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-              {[["Objetivo", selecionado.goal], ["Restrições", selecionado.restrictions], ["Atividade Física", selecionado.activity], ["Problemas de Saúde", selecionado.healthIssues], ["Horas de Sono", selecionado.sleep], ["Sexo", selecionado.sex]].map(([k, v]) => (
-                <View key={k} style={{ width: "48%", backgroundColor: c.gray50, borderRadius: 12, padding: 12 }}>
-                  <Text style={{ fontSize: 10, fontWeight: "700", color: c.gray400, textTransform: "uppercase" }}>{k}</Text>
-                  <Text style={{ fontWeight: "700", color: c.gray900, marginTop: 2 }}>{v || "—"}</Text>
-                </View>
-              ))}
-            </View>
+          <View style={{ gap: 16 }}>
             <View style={{ borderWidth: 2, borderStyle: "dashed", borderColor: c.gray200, borderRadius: 12, padding: 12, gap: 10 }}>
-              <Text style={{ fontWeight: "700", color: c.gray600 }}>Observações Clínicas</Text>
-              <Input placeholder="Adicione notas clínicas aqui..." multiline value={notas} onChangeText={setNotas} />
-              <Button title={salvandoNotas ? "Salvando..." : "Salvar Notas"} onPress={salvarNotas} loading={salvandoNotas} />
+              <Text style={{ fontWeight: "700", color: c.gray600 }}>Nova observação</Text>
+              <Input placeholder="Adicione uma observação clínica..." multiline value={novaObservacao} onChangeText={setNovaObservacao} />
+              <Button title={salvandoNotas ? "Salvando..." : "Salvar observação"} onPress={salvarNotas} loading={salvandoNotas} />
             </View>
-          </>
+            <View style={{ gap: 10 }}>
+              <Text style={{ fontWeight: "700", color: c.gray600 }}>Histórico de observações</Text>
+              {observacoes.length === 0 ? (
+                <Text style={{ color: c.gray400, fontSize: 13 }}>Nenhuma observação registrada ainda.</Text>
+              ) : (
+                observacoes.map(o => (
+                  <View key={o.id} style={{ backgroundColor: c.gray50, borderRadius: 10, padding: 12 }}>
+                    <Text style={{ fontSize: 11, color: c.gray400, fontWeight: "700", marginBottom: 4 }}>
+                      {new Date(o.dataHora).toLocaleDateString("pt-BR")} — Nutricionista
+                    </Text>
+                    <Text style={{ color: c.gray700 }}>{o.texto}</Text>
+                  </View>
+                ))
+              )}
+            </View>
+          </View>
         )}
       </Sheet>
 
       {/* Evolução */}
-      <Sheet visible={!!evolucaoPac} onClose={() => setEvolucaoPac(null)} title={`Evolução: ${evolucaoPac?.name || ""}`} full>
+      <Sheet visible={!!evolucaoPac} onClose={() => setEvolucaoPac(null)} title={`Evolução: ${evolucaoPac?.clienteNome || ""}`} full>
         {evolucaoPac && (
           <>
-            {evo.length > 0 ? (
+            {historico.length > 0 ? (
               <>
-                <LineChart data={evo.map(e => ({ label: e.date, value: parseFloat(e.weight) }))} height={200} />
+                <LineChart data={historico.map(h => ({ label: h.data, value: parseFloat(h.peso) }))} height={200} />
                 <View style={{ flexDirection: "row", gap: 10 }}>
                   <View style={{ flex: 1, backgroundColor: c.green50, borderRadius: 12, padding: 10, alignItems: "center" }}>
                     <Text style={{ fontSize: 10, fontWeight: "700", color: c.green600, textTransform: "uppercase" }}>Inicial</Text>
-                    <Text style={{ fontSize: 17, fontWeight: "800" }}>{evo[0].weight}kg</Text>
+                    <Text style={{ fontSize: 17, fontWeight: "800" }}>{evolucaoDados?.pesoInicial ?? "—"}kg</Text>
                   </View>
                   <View style={{ flex: 1, backgroundColor: c.blue50, borderRadius: 12, padding: 10, alignItems: "center" }}>
-                    <Text style={{ fontSize: 10, fontWeight: "700", color: c.blue600, textTransform: "uppercase" }}>Atual</Text>
-                    <Text style={{ fontSize: 17, fontWeight: "800" }}>{evolucaoPac.weight}kg</Text>
+                    <Text style={{ fontSize: 10, fontWeight: "700", color: c.blue600, textTransform: "uppercase" }}>Ideal</Text>
+                    <Text style={{ fontSize: 17, fontWeight: "800" }}>{evolucaoDados?.pesoIdeal ?? "—"}kg</Text>
                   </View>
                   <View style={{ flex: 1, backgroundColor: c.purple50, borderRadius: 12, padding: 10, alignItems: "center" }}>
-                    <Text style={{ fontSize: 10, fontWeight: "700", color: c.purple600, textTransform: "uppercase" }}>Redução</Text>
-                    <Text style={{ fontSize: 17, fontWeight: "800" }}>-{(evo[0].weight - evolucaoPac.weight).toFixed(1)}kg</Text>
+                    <Text style={{ fontSize: 10, fontWeight: "700", color: c.purple600, textTransform: "uppercase" }}>IMC</Text>
+                    <Text style={{ fontSize: 17, fontWeight: "800" }}>{evolucaoDados?.imc ?? "—"}</Text>
                   </View>
                 </View>
               </>
             ) : <Empty text="Nenhum histórico de peso registrado para este paciente." />}
-            <View style={{ borderTopWidth: 1, borderTopColor: c.gray100, paddingTop: 12, gap: 10 }}>
-              <Text style={{ fontWeight: "700", color: c.gray600 }}>Nota de Progresso</Text>
-              <Input placeholder="Registre evolução, observações de progresso..." multiline value={notaProgresso} onChangeText={setNotaProgresso} />
-              <Button title={salvandoProg ? "Salvando..." : "Salvar Nota"} onPress={salvarProgresso} loading={salvandoProg} />
-            </View>
           </>
         )}
       </Sheet>
 
-      {/* Novo paciente */}
-      <Sheet
-        visible={novoAberto} onClose={() => setNovoAberto(false)} title="Adicionar Novo Paciente" full
-        footer={<><Button title="Cancelar" variant="outline" style={{ flex: 1 }} onPress={() => setNovoAberto(false)} /><Button title="Salvar Paciente" style={{ flex: 1 }} onPress={salvarNovo} /></>}
-      >
-        <Input label="Nome Completo *" placeholder="João da Silva" value={novo.name} onChangeText={setCampo("name")} autoCapitalize="words" />
-        <Input label="Idade *" placeholder="30" keyboardType="number-pad" value={novo.age} onChangeText={setCampo("age")} />
-        <Input label="Peso (kg) *" placeholder="75.5" keyboardType="decimal-pad" value={novo.weight} onChangeText={v => setCampo("weight")(v.replace(",", "."))} />
-        <Input label="Altura (cm)" placeholder="175" keyboardType="number-pad" value={novo.height} onChangeText={setCampo("height")} />
-        <Select label="Sexo Biológico" value={novo.sex} options={op("Masculino", "Feminino")} onChange={setCampo("sex")} />
-        <Select label="Objetivo Principal" value={novo.goal} options={op("Emagrecimento", "Ganho de Massa", "Definição", "Saúde Geral")} onChange={setCampo("goal")} />
-        <Select label="Nível de Atividade Física" value={novo.activity} options={[{ value: "Sedentário", label: "Sedentário" }, { value: "Leve", label: "Leve (1-3x/semana)" }, { value: "Moderado", label: "Moderado (3-5x/semana)" }, { value: "Intenso", label: "Intenso (6-7x/semana)" }]} onChange={setCampo("activity")} />
-        <Input label="Horas de Sono (média)" placeholder="7" keyboardType="number-pad" value={novo.sleep} onChangeText={setCampo("sleep")} />
-        <Input label="Restrições Alimentares" placeholder="Lactose, glúten..." multiline value={novo.restrictions} onChangeText={setCampo("restrictions")} />
-        <Input label="Problemas de Saúde" placeholder="Diabetes, hipertensão..." multiline value={novo.healthIssues} onChangeText={setCampo("healthIssues")} />
+      {/* Adicionar paciente */}
+      <Sheet visible={novoAberto} onClose={() => setNovoAberto(false)} title="Adicionar Paciente" full>
+        <Segmented value={aba} onChange={setAba} options={[{ value: "convite", label: "Já possui conta" }, { value: "externo", label: "Sem conta" }]} />
+        {aba === "convite" ? (
+          <View style={{ gap: 12 }}>
+            <Text style={{ color: c.gray500, fontSize: 13 }}>Gere um código e envie para o paciente. Ele informa o código no NutriLife para se vincular a você.</Text>
+            {convite ? (
+              <Card style={{ backgroundColor: c.green50 }}>
+                <Text style={{ fontSize: 20, fontWeight: "800", color: c.green700, textAlign: "center" }}>{convite}</Text>
+              </Card>
+            ) : (
+              <Button title={gerandoConvite ? "Gerando..." : "Gerar código de convite"} onPress={handleGerarConvite} loading={gerandoConvite} />
+            )}
+          </View>
+        ) : (
+          <View style={{ gap: 12 }}>
+            <Input label="Nome Completo *" placeholder="João da Silva" value={externo.nome} onChangeText={v => setExterno(p => ({ ...p, nome: v }))} autoCapitalize="words" />
+            <Input label="Objetivo" placeholder="Emagrecimento" value={externo.objetivo} onChangeText={v => setExterno(p => ({ ...p, objetivo: v }))} />
+            <Input label="Observações" multiline value={externo.observacoes} onChangeText={v => setExterno(p => ({ ...p, observacoes: v }))} />
+            <Button title="Salvar Paciente" onPress={salvarExterno} />
+          </View>
+        )}
       </Sheet>
     </Screen>
   );

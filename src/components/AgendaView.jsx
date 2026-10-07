@@ -20,7 +20,7 @@ function gradeDoMes(ano, mes) {
 
 // Mesma tela para paciente ("Minha Agenda") e nutricionista ("Agenda de Pacientes")
 export default function AgendaView({ userType = "patient" }) {
-  const { agendamentos, adicionarAgendamento, editarAgendamento, removerAgendamento, nutricionistas, pacientes } = useApp();
+  const { agendamentos, adicionarAgendamento, editarAgendamento, removerAgendamento, nutricionistas, vinculos } = useApp();
   const [mesAtual, setMesAtual] = useState(new Date());
   const [selecionado, setSelecionado] = useState(hojeIso());
   const [aberto, setAberto] = useState(false);
@@ -70,7 +70,7 @@ export default function AgendaView({ userType = "patient" }) {
   const comConsulta = new Set(agendamentos.map(normDate));
   const ehNutri = userType === "nutritionist";
 
-  const nomesSugeridos = (ehNutri ? pacientes.map(p => p.name) : nutricionistas.map(n => n.nome)).filter(Boolean);
+  const nomesSugeridos = (ehNutri ? vinculos.filter(v => v.status === "ATIVO").map(v => v.clienteNome) : nutricionistas.map(n => n.nome)).filter(Boolean);
   const campoNome = ehNutri ? "paciente" : "nutritionist";
   const filtroNomes = nomesSugeridos.filter(n => n.toLowerCase().includes(form[campoNome].toLowerCase()) && n !== form[campoNome]);
 

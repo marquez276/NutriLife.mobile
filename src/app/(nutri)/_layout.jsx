@@ -9,6 +9,7 @@ export default function NutriLayout() {
         { name: "agenda-nutricionista", title: "Agenda", icon: "calendar" },
         { name: "perfil-nutricionista", title: "Perfil", icon: "user" },
       ]}
+      hidden={["plano-personalizado"]}
     />
   );
 }

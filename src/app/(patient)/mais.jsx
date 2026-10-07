@@ -4,20 +4,21 @@ import { Avatar, Card, Icon, Screen, Button } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { c } from "../../theme";
 
-const LINKS = [
-  { to: "/alimentos", icon: "database", label: "Banco de Alimentos" },
-  { to: "/nutricionistas", icon: "search", label: "Nutricionistas" },
-  { to: "/agenda", icon: "calendar", label: "Minha Agenda" },
-  { to: "/consultas", icon: "video", label: "Consultas" },
-  { to: "/loja", icon: "shopping-cart", label: "Loja NutriLife" },
-  { to: "/perfil", icon: "user", label: "Meu Perfil" },
-];
-
 // Equivalente ao restante da barra lateral do web
 export default function Mais() {
   const router = useRouter();
-  const { usuarioLogado, logout } = useApp();
+  const { usuarioLogado, logout, vinculos } = useApp();
   const sair = async () => { await logout(); router.replace("/"); };
+
+  const LINKS = [
+    { to: "/alimentos", icon: "database", label: "Banco de Alimentos" },
+    { to: "/nutricionistas", icon: "search", label: "Nutricionistas" },
+    ...(vinculos?.some(v => v.status === "ATIVO") ? [{ to: "/plano-personalizado", icon: "clipboard", label: "Plano Personalizado" }] : []),
+    { to: "/agenda", icon: "calendar", label: "Minha Agenda" },
+    { to: "/consultas", icon: "video", label: "Consultas" },
+    { to: "/loja", icon: "shopping-cart", label: "Loja NutriLife" },
+    { to: "/perfil", icon: "user", label: "Meu Perfil" },
+  ];
 
   return (
     <Screen title="Menu" subtitle="Tudo o que você pode fazer no NutriLife">

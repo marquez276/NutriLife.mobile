@@ -10,12 +10,16 @@ const media = (reviews) => (reviews?.length ? (reviews.reduce((s, r) => s + (r.r
 const whats = (n) => abrirUrl(`https://wa.me/${n.replace(/\D/g, "")}`);
 
 export default function NutricionistasLista() {
-  const { nutricionistas, adicionarAvaliacao, usuarioLogado, recarregarNutricionistas } = useApp();
+  const { nutricionistas, adicionarAvaliacao, usuarioLogado, recarregarNutricionistas, vinculos, solicitarVinculo, resgatarConvite } = useApp();
   const [busca, setBusca] = useState("");
   const [selecionadoId, setSelecionadoId] = useState(null);
   const [aba, setAba] = useState("sobre");
   const [nova, setNova] = useState({ rating: 5, comment: "" });
   const [enviando, setEnviando] = useState(false);
+  const [solicitando, setSolicitando] = useState(false);
+  const [conviteAberto, setConviteAberto] = useState(false);
+  const [codigoConvite, setCodigoConvite] = useState("");
+  const [resgatando, setResgatando] = useState(false);
 
   useEffect(() => { recarregarNutricionistas(); }, []);
 
@@ -34,10 +38,32 @@ export default function NutricionistasLista() {
   };
 
   const abrir = (n) => { setSelecionadoId(n.id); setAba("sobre"); };
+  const vinculoCom = (nutricionistaId) => vinculos.find(v => v.nutricionistaId === nutricionistaId);
+
+  const handleSolicitar = async (nutricionistaId) => {
+    setSolicitando(true);
+    await solicitarVinculo(nutricionistaId);
+    setSolicitando(false);
+  };
+
+  const handleResgatar = async () => {
+    if (!codigoConvite.trim()) { toast.error("Informe o código de convite."); return; }
+    setResgatando(true);
+    const { ok } = await resgatarConvite(codigoConvite.trim().toUpperCase());
+    setResgatando(false);
+    if (ok) { setCodigoConvite(""); setConviteAberto(false); }
+  };
 
   return (
     <Screen title="Encontre seu Nutricionista" subtitle="Especialistas prontos para te ajudar em sua jornada de saúde" back="/dashboard" onRefresh={recarregarNutricionistas}>
       <Input placeholder="Buscar por nome ou especialidade..." value={busca} onChangeText={setBusca} />
+      <Button title="Tenho um código de convite" variant="outline" icon="link" onPress={() => setConviteAberto(true)} />
+
+      <Sheet visible={conviteAberto} onClose={() => setConviteAberto(false)} title="Já tenho um código de convite">
+        <Text style={{ color: c.gray500 }}>Informe o código que seu nutricionista compartilhou com você.</Text>
+        <Input placeholder="NUTRI-XXXXXX" value={codigoConvite} onChangeText={setCodigoConvite} autoCapitalize="characters" />
+        <Button title={resgatando ? "Validando..." : "Vincular"} onPress={handleResgatar} loading={resgatando} />
+      </Sheet>
 
       {filtrados.length === 0 ? (
         <Card><Empty text={nutricionistas.length === 0 ? "No momento não há nutricionistas disponíveis." : "Nenhum nutricionista encontrado."} /></Card>
@@ -78,6 +104,13 @@ export default function NutricionistasLista() {
               {selecionado.specialty ? <Badge text={selecionado.specialty} /> : null}
               <Row style={{ gap: 6 }}><Stars rating={parseFloat(media(selecionado.reviews) || 0)} /><Text style={{ color: c.gray500 }}>{media(selecionado.reviews) ?? "Novo"}</Text></Row>
             </View>
+
+            {(() => {
+              const v = vinculoCom(selecionado.id);
+              if (v?.status === "ATIVO") return <Badge text="Vinculado" tone="green" icon="check" style={{ alignSelf: "center" }} />;
+              if (v?.status === "PENDENTE") return <Badge text="Solicitação enviada" tone="amber" icon="clock" style={{ alignSelf: "center" }} />;
+              return <Button title={solicitando ? "Enviando..." : "Solicitar acompanhamento"} icon="user-plus" onPress={() => handleSolicitar(selecionado.id)} loading={solicitando} />;
+            })()}
 
             <Row style={{ justifyContent: "center", flexWrap: "wrap", gap: 10 }}>
               {selecionado.whatsapp ? <Button title="WhatsApp" icon="message-circle" onPress={() => whats(selecionado.whatsapp)} style={{ backgroundColor: "#25D366", borderColor: "#25D366" }} /> : null}

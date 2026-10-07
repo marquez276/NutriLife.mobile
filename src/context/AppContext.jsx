@@ -30,7 +30,8 @@ export function AppProvider({ children }) {
   const [refeicoes, setRefeicoesState] = useState([]);
   const [pesagens, setPesagensState] = useState([]);
   const [agendamentos, setAgendamentosState] = useState([]);
-  const [pacientes, setPacientesState] = useState([]);
+  const [vinculos, setVinculosState] = useState([]);
+  const [pacientesExternos, setPacientesExternosState] = useState([]);
   const [nutricionistas, setNutricionistasState] = useState([]);
   const [metas, setMetasState] = useState(null);
 
@@ -41,7 +42,8 @@ export function AppProvider({ children }) {
     setRefeicoesState([]);
     setPesagensState([]);
     setAgendamentosState([]);
-    setPacientesState([]);
+    setVinculosState([]);
+    setPacientesExternosState([]);
     setNutricionistasState([]);
     setMetasState(null);
   }
@@ -159,8 +161,9 @@ export function AppProvider({ children }) {
       apiFetch(`/consultas/nutricionista/${uid}`)
         .then(r => r.json()).then(d => setAgendamentosState(Array.isArray(d) ? d : []))
         .catch(() => setAgendamentosState([]));
-      load(`pacientes_${uid}`, []).then(setPacientesState);
+      carregarPacientesExternos(uid);
     }
+    if (tipo === "patient" || tipo === "nutritionist") carregarVinculos(uid, tipo);
     carregarNutricionistas();
   }, [uid, tipo]);
 
@@ -358,11 +361,85 @@ export function AppProvider({ children }) {
     setAgendamentosState(prev => prev.filter(a => a.id !== id));
   }
 
-  // ── Pacientes (nutricionista) ─────────────────────────────────────
-  function adicionarPaciente(paciente) {
-    if (!usuarioLogado) return;
-    const novo = { ...paciente, id: Date.now(), status: "Em dia", progress: 0, evolution: [] };
-    setPacientesState(prev => { const next = [...prev, novo]; save(`pacientes_${usuarioLogado.id}`, next); return next; });
+  // ── Vínculo paciente ↔ nutricionista ────────────────────────────────
+  function carregarVinculos(id, tipoAtual) {
+    const url = tipoAtual === "nutritionist" ? `/vinculos/nutricionista/${id}` : `/vinculos/cliente/${id}`;
+    apiFetch(url)
+      .then(r => (r.ok ? r.json() : []))
+      .then(d => setVinculosState(Array.isArray(d) ? d : []))
+      .catch(() => setVinculosState([]));
+  }
+
+  async function solicitarVinculo(nutricionistaId) {
+    if (!usuarioLogado) return { ok: false };
+    try {
+      const res = await apiFetch("/vinculos/solicitar", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ nutricionistaId }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(data.message || "Não foi possível enviar a solicitação."); return { ok: false }; }
+      setVinculosState(prev => [...prev, data]);
+      toast.success("Solicitação enviada.");
+      return { ok: true };
+    } catch { toast.error("Erro ao conectar com o servidor."); return { ok: false }; }
+  }
+
+  async function gerarConvite() {
+    if (!usuarioLogado) return null;
+    try {
+      const res = await apiFetch("/vinculos/convite", { method: "POST" });
+      if (!res.ok) { toast.error("Não foi possível gerar o convite."); return null; }
+      const data = await res.json();
+      setVinculosState(prev => [...prev, data]);
+      return data.codigoConvite;
+    } catch { toast.error("Erro ao conectar com o servidor."); return null; }
+  }
+
+  async function resgatarConvite(codigoConvite) {
+    if (!usuarioLogado) return { ok: false };
+    try {
+      const res = await apiFetch("/vinculos/convite/resgatar", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ codigoConvite }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(data.message || "Código de convite inválido."); return { ok: false }; }
+      setVinculosState(prev => [...prev, data]);
+      toast.success("Vínculo realizado com sucesso.");
+      return { ok: true };
+    } catch { toast.error("Erro ao conectar com o servidor."); return { ok: false }; }
+  }
+
+  async function aceitarVinculo(id) {
+    try {
+      const res = await apiFetch(`/vinculos/${id}/aceitar`, { method: "PUT" });
+      if (!res.ok) throw new Error(res.status);
+      const atualizado = await res.json();
+      setVinculosState(prev => prev.map(v => (v.id === id ? atualizado : v)));
+    } catch { toast.error("Não foi possível aceitar. Tente novamente."); }
+  }
+
+  async function recusarVinculo(id) {
+    try {
+      const res = await apiFetch(`/vinculos/${id}/recusar`, { method: "PUT" });
+      if (!res.ok) throw new Error(res.status);
+      const atualizado = await res.json();
+      setVinculosState(prev => prev.map(v => (v.id === id ? atualizado : v)));
+    } catch { toast.error("Não foi possível recusar. Tente novamente."); }
+  }
+
+  // ── Pacientes sem conta (cadastrados manualmente pelo nutricionista) ──
+  function carregarPacientesExternos(nutricionistaId) {
+    apiFetch(`/pacientes-externos/nutricionista/${nutricionistaId}`)
+      .then(r => (r.ok ? r.json() : []))
+      .then(d => setPacientesExternosState(Array.isArray(d) ? d : []))
+      .catch(() => setPacientesExternosState([]));
+  }
+
+  async function cadastrarPacienteExterno(d) {
+    if (!usuarioLogado) return { ok: false };
+    try {
+      const res = await apiFetch("/pacientes-externos", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ ...d, nutricionistaId: usuarioLogado.id }) });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); toast.error(err.message || "Erro ao cadastrar paciente."); return { ok: false }; }
+      const salvo = await res.json();
+      setPacientesExternosState(prev => [...prev, salvo]);
+      return { ok: true };
+    } catch { toast.error("Erro ao conectar com o servidor."); return { ok: false }; }
   }
 
   // ── Avaliações ────────────────────────────────────────────────────
@@ -390,7 +467,8 @@ export function AppProvider({ children }) {
       refeicoes, adicionarRefeicao, editarRefeicao, removerRefeicao,
       pesagens, adicionarPesagem, removerPesagem,
       agendamentos, adicionarAgendamento, editarAgendamento, removerAgendamento,
-      pacientes, adicionarPaciente,
+      vinculos, carregarVinculos, solicitarVinculo, gerarConvite, resgatarConvite, aceitarVinculo, recusarVinculo,
+      pacientesExternos, cadastrarPacienteExterno,
       cadastrarPaciente, cadastrarNutricionista,
     }}>
       {children}

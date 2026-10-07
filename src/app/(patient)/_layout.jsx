@@ -11,7 +11,7 @@ export default function PatientLayout() {
         { name: "evolucao", title: "Evolução", icon: "trending-down" },
         { name: "mais", title: "Mais", icon: "menu" },
       ]}
-      hidden={["alimentos", "nutricionistas", "agenda", "consultas", "perfil", "loja"]}
+      hidden={["alimentos", "nutricionistas", "agenda", "consultas", "perfil", "loja", "plano-personalizado"]}
     />
   );
 }
